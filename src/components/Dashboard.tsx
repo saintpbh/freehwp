@@ -1,19 +1,32 @@
 import { Search, Folder, Star, Tag, Plus } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import { useState, useEffect } from 'react';
 import '../styles.css';
 
 interface DashboardProps {
     onOpenFile: () => void;
     onNewFile: () => void;
+    onOpenDbFile: (id: string, title: string) => void;
 }
 
-export function Dashboard({ onOpenFile, onNewFile }: DashboardProps) {
-    // Dummy DB items for now to show the design
-    const dummySermons = [
-        { id: 1, title: '사랑은 행함과 진실함으로', date: 'May 14, 2023', tags: ['#사랑', '#요한1서'], snippet: '우리가 형제를 사랑함으로 사망에서 옮겨...' },
-        { id: 2, title: '하나님의 본성: 사랑', date: 'Apr 30, 2023', tags: ['#은혜', '#사랑'], snippet: '하나님은 사랑이시라. 사랑 안에 거하는...' },
-        { id: 3, title: '요한일서의 소망', date: 'Apr 16, 2023', tags: ['#믿음', '#교회'], snippet: '빛 가운데 행하며 형제를 사랑하라...' },
-        { id: 4, title: '영원한 생명', date: 'Apr 02, 2023', tags: ['#복음', '#믿음'], snippet: '하나님이 세상을 이처럼 사랑하사 독생자를...' },
-    ];
+export function Dashboard({ onOpenFile, onNewFile, onOpenDbFile }: DashboardProps) {
+    const [dbDocs, setDbDocs] = useState<any[]>([]);
+    const [searchQuery, setSearchQuery] = useState('');
+
+    useEffect(() => {
+        invoke('get_all_documents').then((docs: any) => {
+            setDbDocs(docs);
+        }).catch(err => {
+            console.error('Failed to load db documents', err);
+        });
+    }, []);
+
+    const filteredDocs = dbDocs.filter(doc => {
+        if (!searchQuery) return true;
+        const q = searchQuery.toLowerCase();
+        return doc.title.toLowerCase().includes(q) || 
+               (doc.outline_json && doc.outline_json.toLowerCase().includes(q));
+    });
 
     return (
         <div className="dashboard-container">
@@ -37,30 +50,42 @@ export function Dashboard({ onOpenFile, onNewFile }: DashboardProps) {
                 {/* Search Header */}
                 <div className="dashboard-header">
                     <div className="search-bar">
-                        <input type="text" placeholder="Search sermons, tags, dates..." />
+                        <input 
+                            type="text" 
+                            placeholder="Search sermons, tags, dates..." 
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
                         <Search className="search-icon" size={18} />
                     </div>
-                    <div className="search-tags">
-                        <span className="tag-chip">요한1서 &times;</span>
-                        <span className="tag-chip">사랑 &times;</span>
-                        <span className="tag-chip">2023년 &times;</span>
+                    <div className="search-tags" style={{ opacity: 0.5 }}>
+                        {/* Dynamic tags logic can be placed here in the future */}
                     </div>
                 </div>
 
                 {/* Grid Content */}
                 <div className="dashboard-content">
-                    <h1 className="content-title">Sermon Database <span className="subtitle">8 Sermons found</span></h1>
+                    <h1 className="content-title">Sermon Database <span className="subtitle">{filteredDocs.length} Sermons found</span></h1>
                     <div className="sermon-grid">
-                        {dummySermons.map(sermon => (
-                            <div key={sermon.id} className="sermon-card" onClick={onNewFile}>
-                                <div className="card-custom-date">{sermon.date}</div>
-                                <h3 className="card-title">{sermon.title}</h3>
-                                <p className="card-snippet">{sermon.snippet}</p>
-                                <div className="card-tags">
-                                    {sermon.tags.map(t => <span key={t} className="card-tag">{t}</span>)}
+                        {filteredDocs.map(sermon => {
+                            const date = new Date(sermon.updated_at).toLocaleDateString();
+                            let tags: string[] = [];
+                            try {
+                                const outline = JSON.parse(sermon.outline_json);
+                                tags = outline.slice(0, 3).map((o: any) => `#${o.title.substring(0, 8)}`);
+                            } catch (e) {}
+
+                            return (
+                                <div key={sermon.id} className="sermon-card" onClick={() => onOpenDbFile(sermon.id, sermon.title)}>
+                                    <div className="card-custom-date">{date}</div>
+                                    <h3 className="card-title">{sermon.title}</h3>
+                                    <p className="card-snippet">문단: {sermon.paragraph_count}개 / 글자: {sermon.char_count}자</p>
+                                    <div className="card-tags">
+                                        {tags.map((t, idx) => <span key={idx} className="card-tag">{t}</span>)}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 </div>
             </div>

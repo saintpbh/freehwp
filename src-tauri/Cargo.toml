@@ -25,3 +25,4 @@ regex = "1"
 rhwp = { git = "https://github.com/edwardkim/rhwp" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 zip = "2.2"
+tauri-plugin-clipboard-manager = "2"

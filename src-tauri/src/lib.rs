@@ -3,6 +3,7 @@ mod hwpx_writer;
 mod document;
 mod bible;
 mod menu;
+mod db;
 
 use bible::BibleSearchResult;
 use document::DocumentState;
@@ -87,7 +88,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
+            if let Err(e) = db::init_db(&app.handle()) {
+                eprintln!("DB 초기화 실패: {}", e);
+            }
+
             let resource_path = app.path().resource_dir()
                 .map_err(|e| format!("리소스 경로 실패: {}", e))?;
             let bible_db_path = resource_path.join("bible.db");
@@ -107,6 +113,10 @@ pub fn run() {
             export_html,
             save_hwpx,
             search_bible,
+            db::get_all_documents,
+            db::load_document,
+            db::save_document,
+            db::delete_document,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| eprintln!("error while running tauri application: {}", e));

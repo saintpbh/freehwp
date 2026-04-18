@@ -253,6 +253,7 @@ html, body, #root {
     justify-content: center;
     gap: 20px;
     position: relative;
+    padding-top: 60px;
 }
 
 .welcome::before {
@@ -646,20 +647,41 @@ html, body, #root {
 }
 
 .presenter-outline {
-    width: 40px;
+    width: 250px;
     display: flex;
     flex-direction: column;
+    padding: 40px 20px;
+    border-left: 1px solid #333;
+    background: #1a1a1a;
+    overflow-y: auto;
+}
+
+.presenter-outline .outline-item {
+    display: flex;
     align-items: center;
-    padding: 40px 0;
-    border-right: 1px solid #333;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    position: relative;
+}
+
+.presenter-outline .outline-item:hover {
+    opacity: 1;
 }
 
 .presenter-outline button {
     background: transparent;
     border: none;
-    cursor: pointer;
     padding: 10px;
     outline: none;
+}
+
+.presenter-outline .outline-text {
+    font-size: 14px;
+    margin-left: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .presenter-outline .dot {
@@ -670,6 +692,9 @@ html, body, #root {
 
 .presenter-outline .line {
     width: 1px; height: 30px; background: #333;
+    position: absolute;
+    left: 14px;
+    top: 24px;
 }
 
 .presenter-scrollable {
@@ -732,3 +757,125 @@ html, body, #root {
     background: transparent; border: none; color: #aaa; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px;
 }
 .ctrl-close:hover { color: #fff; }
+
+.outline-node.dragging {
+    opacity: 0.5;
+    background-color: #f0f0f0;
+}
+
+.outline-node.drag-over {
+    border-top: 2px solid #007bff;
+    background-color: #f8f9fa;
+}
+
+/* App Tab Bar */
+.app-tab-bar {
+  display: flex;
+  align-items: center;
+}
+
+.app-tab {
+  display: flex;
+  align-items: center;
+  padding: 6px 14px;
+  background-color: #d8d8d8;
+  border-right: 1px solid #bfbfbf;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  margin-top: 6px;
+  margin-right: 2px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #555;
+  transition: all 0.2s ease;
+  min-width: 120px;
+  max-width: 200px;
+  user-select: none;
+}
+
+.app-tab:hover {
+  background-color: #e4e4e4;
+}
+
+.app-tab.active {
+  background-color: #e3e3e3; /* matches editor background */
+  font-weight: 600;
+  color: #333;
+  box-shadow: 0 -1px 3px rgba(0,0,0,0.05); /* subtle elevation */
+}
+
+.app-tab .tab-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-close-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  color: #888;
+  padding: 0;
+}
+
+.tab-close-btn:hover {
+  background-color: rgba(0,0,0,0.1);
+  color: #333;
+}
+
+.tab-new-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  color: #555;
+  padding: 0;
+}
+
+.tab-new-btn:hover {
+  background-color: rgba(0,0,0,0.08);
+}
+
+/* --- Drag and Drop Outline Animations --- */
+.outline-node.dragging {
+    opacity: 0.4;
+    background: #f8f8f8;
+    box-shadow: inset 0 0 0 1px #ddd;
+}
+
+.drag-indicator {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background-color: #0b66c3;
+    z-index: 10;
+    border-radius: 2px;
+    pointer-events: none;
+}
+
+.drag-indicator.top {
+    top: -1px;
+}
+
+.drag-indicator.bottom {
+    bottom: -1px;
+}
+
+.outline-node {
+    position: relative; 
+}
