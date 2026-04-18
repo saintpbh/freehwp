@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open, save, message } from '@tauri-apps/plugin-dialog';
-import { FileText, MonitorPlay, Maximize2, X, Plus } from 'lucide-react';
+import { FileText, MonitorPlay, Maximize2, X, Plus, Printer } from 'lucide-react';
 import { Editor } from './components/Editor';
 import { StatusBar } from './components/StatusBar';
 import { ScriptureModal } from './components/ScriptureModal';
@@ -144,7 +144,67 @@ function App() {
             setIsLoading(true);
             cw.postMessage({ type: 'rhwp-request', id: 'EXPORT_EXTERNAL', method: 'exportHwp' }, '*');
         }
-    }, [activeDoc]);
+    }, [activeDoc, getIframeWindow]);
+
+    const handlePrint = useCallback(() => {
+        const cw = getIframeWindow();
+        if (!cw) return;
+
+        console.log('[App] handlePrint: Requesting page count...');
+        const printId = `PRINT_${Date.now()}`;
+
+        const handleReply = async (ev: MessageEvent) => {
+            if (ev.data?.type !== 'rhwp-response' || ev.data?.id !== printId) return;
+            window.removeEventListener('message', handleReply);
+
+            const pageCount = ev.data.result;
+            if (!pageCount || pageCount === 0) {
+                console.warn('[App] No pages to print');
+                return;
+            }
+
+            console.log(`[App] Printing ${pageCount} pages...`);
+
+            // SVG 페이지들 수집
+            const svgPages: string[] = [];
+            for (let i = 0; i < pageCount; i++) {
+                const svgResult = await new Promise<string>((resolve) => {
+                    const svgId = `PRINT_SVG_${i}_${Date.now()}`;
+                    const svgHandler = (se: MessageEvent) => {
+                        if (se.data?.type !== 'rhwp-response' || se.data?.id !== svgId) return;
+                        window.removeEventListener('message', svgHandler);
+                        resolve(se.data.result);
+                    };
+                    window.addEventListener('message', svgHandler);
+                    cw.postMessage({ type: 'rhwp-request', id: svgId, method: 'getPageSvg', params: { page: i } }, '*');
+                });
+                svgPages.push(svgResult);
+            }
+
+            console.log(`[App] All ${svgPages.length} SVG pages collected. Opening print window...`);
+
+            // Tauri 네이티브 인쇄 창 열기
+            const printHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+                @page { margin: 0; }
+                * { margin: 0; padding: 0; }
+                body { background: #fff; }
+                .page { page-break-after: always; overflow: hidden; }
+                .page:last-child { page-break-after: auto; }
+                .page svg { width: 100%; height: 100%; display: block; }
+            </style></head><body>
+                ${svgPages.map(svg => `<div class="page">${svg}</div>`).join('\n')}
+            </body></html>`;
+
+            try {
+                await invoke('print_document', { html: printHtml });
+            } catch (err) {
+                console.error('[App] print_document failed:', err);
+            }
+        };
+
+        window.addEventListener('message', handleReply);
+        cw.postMessage({ type: 'rhwp-request', id: printId, method: 'pageCount' }, '*');
+    }, [getIframeWindow]);
 
     const handleBibleInsert = useCallback((verses: BibleVerse[]) => {
         const cw = getIframeWindow();
@@ -167,6 +227,7 @@ function App() {
             if (e.key === 'o') { e.preventDefault(); setViewMode('dashboard'); }
             else if (e.key === 'n') { e.preventDefault(); handleNewFile(); }
             else if (e.key === 's') { e.preventDefault(); handleSaveToDb(); }
+            else if (e.key === 'p') { e.preventDefault(); handlePrint(); }
             else if (e.key === 'e') { e.preventDefault(); handleExternalExport(); }
             else if (e.key === 'j' || e.key === 'l') { e.preventDefault(); setIsScriptureOpen(true); }
             else if (e.key === 'w') { 
@@ -183,12 +244,14 @@ function App() {
                             const cw = getIframeWindow();
                             if (cw && bytes) {
                                 e.preventDefault();
-                                cw.postMessage({
-                                    type: 'rhwp-request',
-                                    id: Date.now(),
-                                    method: 'pasteTauriImage',
-                                    params: { rgba: Array.from(bytes), width: image.size.width, height: image.size.height }
-                                }, '*');
+                                image.size().then((size) => {
+                                    cw.postMessage({
+                                        type: 'rhwp-request',
+                                        id: Date.now(),
+                                        method: 'pasteTauriImage',
+                                        params: { rgba: Array.from(bytes), width: size.width, height: size.height }
+                                    }, '*');
+                                });
                             }
                         }
                     } catch (err) {
@@ -208,6 +271,7 @@ function App() {
             listen('menu-open', () => setViewMode('dashboard')),
             listen('menu-save', () => handleSaveToDb()),
             listen('menu-export', () => handleExternalExport()),
+            listen('menu-print', () => handlePrint()),
             listen('menu-bible', () => setIsScriptureOpen(true)),
             listen('menu-close_document', () => {
                 if (activeTabId) handleCloseTab(activeTabId);
@@ -243,13 +307,19 @@ function App() {
                 setViewMode(prev => prev === 'presenter' ? 'editor' : prev);
             } else if (e.data?.type === 'CMD_NATIVE_INSERT_BIBLE') {
                 setIsScriptureOpen(true);
+            } else if (e.data?.type === 'CMD_NATIVE_PRINT') {
+                const htmlContent = e.data.html as string;
+                console.log('[App] CMD_NATIVE_PRINT received, opening native print window...');
+                invoke('print_document', { html: htmlContent }).catch(err => {
+                    console.error('[App] print_document failed:', err);
+                });
             } else if (e.data?.type === 'CMD_INSERT_BIBLE_AUTO') {
                 const query = e.data.query;
                 const matchLen = e.data.matchLen;
                 invoke<any>('search_bible', { query: query }).then(result => {
                     const cw = getIframeWindow();
                     if (cw && result.verses.length > 0) {
-                        let combinedText = '\n  "' + result.verses.map(v => `${v.text}`).join(' ') + '"\n';
+                        let combinedText = '\n  "' + result.verses.map((v: any) => `${v.text}`).join(' ') + '"\n';
                         const sourceText = result.verses.length > 1 
                             ? `${result.verses[0].book} ${result.verses[0].chapter}:${result.verses[0].verse}-${result.verses[result.verses.length-1].verse}`
                             : `${result.verses[0].book} ${result.verses[0].chapter}:${result.verses[0].verse}`;
@@ -275,12 +345,14 @@ function App() {
                             const bytes = await image.rgba();
                             const cw = getIframeWindow();
                             if (cw && bytes) {
-                                cw.postMessage({
-                                    type: 'rhwp-request',
-                                    id: Date.now(),
-                                    method: 'pasteTauriImage',
-                                    params: { rgba: Array.from(bytes), width: image.size.width, height: image.size.height } // Raw RGBA pixels
-                                }, '*');
+                                image.size().then((size) => {
+                                    cw.postMessage({
+                                        type: 'rhwp-request',
+                                        id: Date.now(),
+                                        method: 'pasteTauriImage',
+                                        params: { rgba: Array.from(bytes), width: size.width, height: size.height } // Raw RGBA pixels
+                                    }, '*');
+                                });
                             }
                         }
                     } catch (err) {
@@ -385,25 +457,9 @@ function App() {
         }
     }, []);
 
-    // Database Dashboard View
-    if (viewMode === 'dashboard' || docs.length === 0) {
-        return (
-            <div className="welcome" onKeyDown={handleKeyDown} tabIndex={0}>
-                <Dashboard onOpenFile={handleOpenFile} onNewFile={handleNewFile} onOpenDbFile={handleLoadFromDb} />
-            </div>
-        );
-    }
+    // Remove early return for Dashboard so Editors don't unmount
 
-    // Presenter View
-    // Presenter View is wrapped below, but if standalone:
-    if (viewMode === 'presenter') {
-        return (
-            <PresenterMode 
-                presenterData={presenterData} 
-                onClose={() => setViewMode('editor')} 
-            />
-        );
-    }
+    // Remove early return for PresenterMode so Editors don't unmount
 
     return (
         <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }} onKeyDown={handleKeyDown} tabIndex={0}>
@@ -428,7 +484,10 @@ function App() {
                             )}
                         </div>
 
-                        <div className="titlebar-right" style={{ width: 80, justifyContent: 'flex-end', paddingRight: 4 }}>
+                        <div className="titlebar-right" style={{ width: 110, justifyContent: 'flex-end', paddingRight: 4 }}>
+                            <button className="titlebar-btn" onClick={handlePrint} title="문서 인쇄 (Cmd+P)">
+                                <Printer size={15} />
+                            </button>
                             <button className="titlebar-btn" onClick={handleEnterPresenter} title="프리젠터 모드">
                                 <MonitorPlay size={15} />
                             </button>
@@ -540,6 +599,22 @@ function App() {
                     charCount={activeDoc.char_count}
                     paragraphCount={activeDoc.paragraph_count}
                 />
+            )}
+
+            {/* Overlays for Dashboard and Presenter Mode */}
+            {(viewMode === 'dashboard' || docs.length === 0) && (
+                <div style={{ position: 'absolute', inset: 0, zIndex: 1000, background: '#f5f5f5' }} className="welcome" tabIndex={0}>
+                    <Dashboard onOpenFile={handleOpenFile} onNewFile={handleNewFile} onOpenDbFile={handleLoadFromDb} />
+                </div>
+            )}
+
+            {viewMode === 'presenter' && (
+                <div style={{ position: 'absolute', inset: 0, zIndex: 2000, background: '#111' }}>
+                    <PresenterMode 
+                        presenterData={presenterData} 
+                        onClose={() => setViewMode('editor')} 
+                    />
+                </div>
             )}
 
             <ScriptureModal

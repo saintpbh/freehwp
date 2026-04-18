@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Pause, X, Type, ChevronUp, ChevronDown } from 'lucide-react';
 import '../styles.css';
 
@@ -12,32 +12,68 @@ interface PresenterModeProps {
 
 export function PresenterMode({ presenterData, onClose }: PresenterModeProps) {
     const [isPlaying, setIsPlaying] = useState(false);
-    const [speed, setSpeed] = useState(() => Number(localStorage.getItem('presenter-speed') || 45));
+    const [speed, setSpeed] = useState(() => Number(localStorage.getItem('presenter-speed') || 20));
     const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem('presenter-font') || 3.5));
+    const isPlayingRef = useRef(false);
     const isManuallyScrolling = useRef(false);
-    const resumeTimeout = useRef<NodeJS.Timeout | null>(null);
+    const resumeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const contentWrapperRef = useRef<HTMLDivElement>(null);
+    const speedRef = useRef(speed);
     
     const [elapsedTime, setElapsedTime] = useState(0);
     const [estimatedTotal, setEstimatedTotal] = useState(0);
+
+    // Sync refs with state
+    useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+    useEffect(() => { speedRef.current = speed; }, [speed]);
 
     useEffect(() => {
         localStorage.setItem('presenter-speed', speed.toString());
         localStorage.setItem('presenter-font', fontSize.toString());
     }, [speed, fontSize]);
 
+    // Auto-focus container on mount
     useEffect(() => {
-        let interval: ReturnType<typeof setInterval>;
-        if (isPlaying && !isManuallyScrolling.current) {
-            interval = setInterval(() => {
-                if (scrollRef.current) {
-                    scrollRef.current.scrollBy(0, speed / 20); 
-                }
-            }, 50);
-        }
-        return () => clearInterval(interval);
-    }, [isPlaying, speed]);
+        containerRef.current?.focus();
+    }, []);
 
+    const fractionalScroll = useRef(0);
+
+    // Single RAF loop that reads from refs (never restarts)
+    useEffect(() => {
+        let animationFrameId: number;
+        let lastTime = performance.now();
+
+        const scrollLoop = (time: number) => {
+            const dt = Math.min(time - lastTime, 100); // cap dt to avoid jumps
+            lastTime = time;
+
+            if (isPlayingRef.current && !isManuallyScrolling.current && scrollRef.current) {
+                const pixels = (speedRef.current * dt) / 1000;
+                fractionalScroll.current += pixels;
+                
+                // 1) Integer scroll for larger steps
+                if (fractionalScroll.current >= 1) {
+                    const step = Math.floor(fractionalScroll.current);
+                    scrollRef.current.scrollBy({ top: step, left: 0, behavior: 'instant' });
+                    fractionalScroll.current -= step;
+                }
+
+                // 2) GPU-accelerated Sub-pixel correction for ultra-smooth 60fps scrolling
+                if (contentWrapperRef.current) {
+                    contentWrapperRef.current.style.transform = `translateY(-${fractionalScroll.current}px)`;
+                }
+            }
+            animationFrameId = requestAnimationFrame(scrollLoop);
+        };
+
+        animationFrameId = requestAnimationFrame(scrollLoop);
+        return () => cancelAnimationFrame(animationFrameId);
+    }, []); // Empty deps — loop never restarts, reads from refs
+
+    // Elapsed timer
     useEffect(() => {
         let timer: ReturnType<typeof setInterval>;
         if (isPlaying) {
@@ -46,6 +82,7 @@ export function PresenterMode({ presenterData, onClose }: PresenterModeProps) {
         return () => clearInterval(timer);
     }, [isPlaying]);
 
+    // Estimated time
     useEffect(() => {
         const calculateTime = () => {
             if (!scrollRef.current) return;
@@ -54,34 +91,39 @@ export function PresenterMode({ presenterData, onClose }: PresenterModeProps) {
                 setEstimatedTotal(elapsedTime);
                 return;
             }
-            const pixelsPerSec = speed; // (speed / 20) * 20 fps = speed pixels per second
-            const secondsLeft = Math.max(0, Math.floor(remainingPixels / pixelsPerSec));
+            const secondsLeft = Math.max(0, Math.floor(remainingPixels / speed));
             setEstimatedTotal(elapsedTime + secondsLeft);
         };
         const interval = setInterval(calculateTime, 1000);
         return () => clearInterval(interval);
     }, [speed, elapsedTime]);
 
+    const togglePlay = useCallback(() => {
+        setIsPlaying(p => !p);
+    }, []);
+
+    // Keyboard handler — attached to container div via onKeyDown
+    const handleKeyDown = useCallback((e: React.KeyboardEvent | KeyboardEvent) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            onClose();
+        }
+        if (e.code === 'Space' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            togglePlay();
+        }
+    }, [onClose, togglePlay]);
+
+    // Also attach global listener as backup for Tauri WebView
     useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                onClose();
-            }
-            if (e.code === 'Space') {
-                e.preventDefault();
-                e.stopPropagation();
-                setIsPlaying(p => !p);
-            }
-        };
-        // Use capture mode to intercept before sliders or buttons consume the spacebar
-        document.addEventListener('keydown', handleKeyDown, true);
-        return () => document.removeEventListener('keydown', handleKeyDown, true);
-    }, [onClose]);
+        const handler = (e: KeyboardEvent) => handleKeyDown(e);
+        window.addEventListener('keydown', handler, true);
+        return () => window.removeEventListener('keydown', handler, true);
+    }, [handleKeyDown]);
 
     const handleWheel = () => {
-        if (!isPlaying) return;
+        if (!isPlayingRef.current) return;
         isManuallyScrolling.current = true;
         if (resumeTimeout.current) clearTimeout(resumeTimeout.current);
         resumeTimeout.current = setTimeout(() => {
@@ -111,7 +153,13 @@ export function PresenterMode({ presenterData, onClose }: PresenterModeProps) {
     };
 
     return (
-        <div className="presenter-container">
+        <div 
+            className="presenter-container" 
+            ref={containerRef}
+            tabIndex={0}
+            onKeyDown={handleKeyDown}
+            style={{ outline: 'none' }}
+        >
             <div style={{ position: 'absolute', top: 16, left: 24, zIndex: 100, color: 'rgba(255,255,255,0.3)', fontSize: 13, pointerEvents: 'none' }}>
                 ESC: 나가기 | Space: 재생/일시정지
             </div>
@@ -129,7 +177,7 @@ export function PresenterMode({ presenterData, onClose }: PresenterModeProps) {
                 onWheel={handleWheel}
                 onTouchMove={handleWheel}
             >
-                <div className="presenter-content" style={{ fontSize: `${fontSize}rem` }}>
+                <div className="presenter-content" ref={contentWrapperRef} style={{ fontSize: `${fontSize}rem` }}>
                     {paragraphs.length > 0 ? (
                         paragraphs.map((p, idx) => (
                             p.text.trim() === '' ? <br key={idx} /> : <p key={idx} className="presenter-para" style={{ marginBottom: '1em' }}>{p.text}</p>
@@ -155,28 +203,33 @@ export function PresenterMode({ presenterData, onClose }: PresenterModeProps) {
 
             {/* Floating Control Bar */}
             <div className={`presenter-controls ${isPlaying ? 'playing' : ''}`}>
-                <button className="ctrl-pb" onClick={(e) => { e.currentTarget.blur(); setIsPlaying(!isPlaying); }}>
+                <button className="ctrl-pb" onClick={(e) => { e.currentTarget.blur(); togglePlay(); }}>
                     {isPlaying ? <Pause size={24} color="#000" /> : <Play size={24} color="#000" fill="#000" />}
                 </button>
                 
                 <div className="ctrl-speed">
-                    <span>거북이</span>
+                    <span>🐢</span>
                     <input 
                         type="range" 
-                        min="10" max="100" 
-                        value={speed} onChange={e => { e.currentTarget.blur(); setSpeed(Number(e.target.value)); }} 
+                        min="5" max="50" step="1"
+                        value={speed} 
+                        onChange={e => { 
+                            const v = Number(e.target.value); 
+                            setSpeed(v); 
+                            speedRef.current = v; 
+                        }} 
                         className="speed-slider"
                     />
-                    <span>토끼 <span style={{color: '#fff', marginLeft: 4, minWidth: '24px', display: 'inline-block'}}>{speed}</span></span>
+                    <span>🐇 <span style={{color: '#fff', marginLeft: 4, minWidth: '24px', display: 'inline-block'}}>{speed}</span></span>
                 </div>
 
                 <div className="ctrl-font">
-                    <button onClick={(e) => { e.currentTarget.blur(); setFontSize(f => Math.max(2, f - 0.5)); }}><ChevronDown size={14}/></button>
+                    <button tabIndex={-1} onClick={(e) => { e.currentTarget.blur(); setFontSize(f => Math.max(2, f - 0.5)); }}><ChevronDown size={14}/></button>
                     <Type size={18} />
-                    <button onClick={(e) => { e.currentTarget.blur(); setFontSize(f => Math.min(8, f + 0.5)); }}><ChevronUp size={14}/></button>
+                    <button tabIndex={-1} onClick={(e) => { e.currentTarget.blur(); setFontSize(f => Math.min(8, f + 0.5)); }}><ChevronUp size={14}/></button>
                 </div>
 
-                <button className="ctrl-close" onClick={onClose}><X size={20} /></button>
+                <button className="ctrl-close" tabIndex={-1} onClick={onClose}><X size={20} /></button>
             </div>
         </div>
     );

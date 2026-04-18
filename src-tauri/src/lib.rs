@@ -81,6 +81,84 @@ async fn search_bible(
         .map_err(|e| format!("성경 검색 실패: {}", e))
 }
 
+#[tauri::command]
+async fn print_document(app: tauri::AppHandle, html: String) -> Result<(), String> {
+    use tauri::WebviewWindowBuilder;
+    use tauri::WebviewUrl;
+
+    // 임시 파일에 HTML 저장
+    let temp_dir = std::env::temp_dir();
+    let print_file = temp_dir.join("sermonnote_print.html");
+    
+    // 인쇄 도구 바 + 버튼 UI 추가 (URL 내비게이션 기반 동작 통신)
+    let full_html = html.replace("</body>", 
+        r#"<div id="print-toolbar" style="
+            position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            color: #fff; padding: 10px 20px;
+            display: flex; align-items: center; gap: 12px;
+            font: 14px -apple-system, BlinkMacSystemFont, sans-serif;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        ">
+            <a href="action://print" style="
+                padding: 8px 24px; background: #2563eb; color: #fff;
+                border: none; border-radius: 6px; cursor: pointer;
+                font-size: 14px; font-weight: 600; text-decoration: none; display: inline-block;
+            ">🖨️ 인쇄</a>
+            <a href="action://close" style="
+                padding: 8px 16px; background: #475569; color: #fff;
+                border: none; border-radius: 6px; cursor: pointer;
+                font-size: 14px; text-decoration: none; display: inline-block;
+            ">닫기</a>
+            <span style="margin-left: 8px; opacity: 0.7;">인쇄 미리보기</span>
+        </div>
+        <style>
+            @media print { #print-toolbar { display: none !important; } }
+            body { padding-top: 52px; }
+        </style>
+</body>"#);
+    
+    fs::write(&print_file, &full_html)
+        .map_err(|e| format!("임시 파일 쓰기 실패: {}", e))?;
+
+    let file_url = format!("file://{}", print_file.display());
+
+    // 이전 인쇄 창이 있으면 닫기
+    if let Some(existing) = app.get_webview_window("print-window") {
+        let _ = existing.close();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    let app_clone = app.clone();
+    let _win = WebviewWindowBuilder::new(
+        &app,
+        "print-window",
+        WebviewUrl::External(file_url.parse().map_err(|e| format!("{}", e))?),
+    )
+    .title("인쇄 미리보기")
+    .inner_size(800.0, 1000.0)
+    .on_navigation(move |url| {
+        if url.scheme() == "action" {
+            let action = url.domain().unwrap_or("");
+            if action == "print" {
+                if let Some(w) = app_clone.get_webview_window("print-window") {
+                    let _ = w.print();
+                }
+            } else if action == "close" {
+                if let Some(w) = app_clone.get_webview_window("print-window") {
+                    let _ = w.close();
+                }
+            }
+            return false; // 브라우저 자체의 URL 이동은 차단
+        }
+        true
+    })
+    .build()
+    .map_err(|e| format!("인쇄 창 열기 실패: {}", e))?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -113,6 +191,7 @@ pub fn run() {
             export_html,
             save_hwpx,
             search_bible,
+            print_document,
             db::get_all_documents,
             db::load_document,
             db::save_document,
