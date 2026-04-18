@@ -1,0 +1,27 @@
+[package]
+name = "hangeulflow"
+version = "0.1.0"
+description = "맘편한설교노트 — HWP 편집기 + 성경 검색"
+authors = ["bongpark"]
+edition = "2021"
+
+[lib]
+name = "hangeulflow_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+regex = "1"
+rhwp = { git = "https://github.com/edwardkim/rhwp" }
+rusqlite = { version = "0.33", features = ["bundled"] }
+zip = "2.2"
